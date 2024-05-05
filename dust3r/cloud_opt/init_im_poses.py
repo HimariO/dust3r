@@ -268,9 +268,12 @@ def fast_pnp(pts3d, focal, msk, device, pp=None, niter_PnP=10):
     best = 0,
     for focal in tentative_focals:
         K = np.float32([(focal, 0, pp[0]), (0, focal, pp[1]), (0, 0, 1)])
-
-        success, R, T, inliers = cv2.solvePnPRansac(pts3d[msk], pixels[msk], K, None,
-                                                    iterationsCount=niter_PnP, reprojectionError=5, flags=cv2.SOLVEPNP_SQPNP)
+        try:
+            success, R, T, inliers = cv2.solvePnPRansac(pts3d[msk], pixels[msk], K, None,
+                                                        iterationsCount=niter_PnP, reprojectionError=5, flags=cv2.SOLVEPNP_SQPNP)
+        except cv2.error:
+            continue
+        
         if not success:
             continue
 

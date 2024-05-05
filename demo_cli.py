@@ -7,6 +7,7 @@
 # --------------------------------------------------------
 import argparse
 import math
+import glob
 import gradio
 import os
 import torch
@@ -137,10 +138,10 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
         imgs[1]['idx'] = 1
     if scenegraph_type == "swin":
         scenegraph_type = scenegraph_type + "-" + str(winsize)
-    if scenegraph_type == "lightglue":
-        scenegraph_type = scenegraph_type + "-" + str(winsize)
     elif scenegraph_type == "oneref":
         scenegraph_type = scenegraph_type + "-" + str(refid)
+    elif scenegraph_type == "lightglue":
+        scenegraph_type = scenegraph_type + "-" + str(winsize)
 
     pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True, filelist=filelist)
     output = inference(pairs, model, device, batch_size=batch_size, verbose=not silent)
@@ -176,103 +177,31 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     return scene, outfile, imgs
 
 
-def set_scenegraph_options(inputfiles, winsize, refid, scenegraph_type):
-    num_files = len(inputfiles) if inputfiles is not None else 1
-    max_winsize = max(1, math.ceil((num_files-1)/2))
-    if scenegraph_type in ["swin", "lightglue"]:
-        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                                minimum=1, maximum=max_winsize, step=1, visible=True)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files-1, step=1, visible=False)
-    elif scenegraph_type == "oneref":
-        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                                minimum=1, maximum=max_winsize, step=1, visible=False)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files-1, step=1, visible=True)
-    else:
-        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                                minimum=1, maximum=max_winsize, step=1, visible=False)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files-1, step=1, visible=False)
-    return winsize, refid
-
-
 def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False):
     recon_fun = functools.partial(get_reconstructed_scene, tmpdirname, model, device, silent, image_size)
     model_from_scene_fun = functools.partial(get_3D_model_from_scene, tmpdirname, silent)
-    with gradio.Blocks(css=""".gradio-container {margin: 0 !important; min-width: 100%};""", title="DUSt3R Demo") as demo:
-        # scene state is save so that you can change conf_thr, cam_size... without rerunning the inference
-        scene = gradio.State(None)
-        gradio.HTML('<h2 style="text-align: center;">DUSt3R Demo</h2>')
-        with gradio.Column():
-            inputfiles = gradio.File(file_count="multiple")
-            with gradio.Row():
-                schedule = gradio.Dropdown(["linear", "cosine"],
-                                           value='linear', label="schedule", info="For global alignment!")
-                niter = gradio.Number(value=300, precision=0, minimum=0, maximum=5000,
-                                      label="num_iterations", info="For global alignment!")
-                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref", "lightglue"],
-                                                  value='complete', label="Scenegraph",
-                                                  info="Define how to make pairs",
-                                                  interactive=True)
-                winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
-                                        minimum=1, maximum=1, step=1, visible=False)
-                refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0, maximum=0, step=1, visible=False)
 
-            run_btn = gradio.Button("Run")
-
-            with gradio.Row():
-                # adjust the confidence threshold
-                min_conf_thr = gradio.Slider(label="min_conf_thr", value=3.0, minimum=1.0, maximum=20, step=0.1)
-                # adjust the camera size in the output pointcloud
-                cam_size = gradio.Slider(label="cam_size", value=0.05, minimum=0.001, maximum=0.1, step=0.001)
-            with gradio.Row():
-                as_pointcloud = gradio.Checkbox(value=False, label="As pointcloud")
-                # two post process implemented
-                mask_sky = gradio.Checkbox(value=False, label="Mask sky")
-                clean_depth = gradio.Checkbox(value=True, label="Clean-up depthmaps")
-                transparent_cams = gradio.Checkbox(value=False, label="Transparent cameras")
-
-            outmodel = gradio.Model3D()
-            outgallery = gradio.Gallery(label='rgb,depth,confidence', columns=3, height="100%")
-
-            # events
-            scenegraph_type.change(set_scenegraph_options,
-                                   inputs=[inputfiles, winsize, refid, scenegraph_type],
-                                   outputs=[winsize, refid])
-            inputfiles.change(set_scenegraph_options,
-                              inputs=[inputfiles, winsize, refid, scenegraph_type],
-                              outputs=[winsize, refid])
-            run_btn.click(fn=recon_fun,
-                          inputs=[inputfiles, schedule, niter, min_conf_thr, as_pointcloud,
-                                  mask_sky, clean_depth, transparent_cams, cam_size,
-                                  scenegraph_type, winsize, refid],
-                          outputs=[scene, outmodel, outgallery])
-            min_conf_thr.release(fn=model_from_scene_fun,
-                                 inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
-                                         clean_depth, transparent_cams, cam_size],
-                                 outputs=outmodel)
-            cam_size.change(fn=model_from_scene_fun,
-                            inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
-                                    clean_depth, transparent_cams, cam_size],
-                            outputs=outmodel)
-            as_pointcloud.change(fn=model_from_scene_fun,
-                                 inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
-                                         clean_depth, transparent_cams, cam_size],
-                                 outputs=outmodel)
-            mask_sky.change(fn=model_from_scene_fun,
-                            inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
-                                    clean_depth, transparent_cams, cam_size],
-                            outputs=outmodel)
-            clean_depth.change(fn=model_from_scene_fun,
-                               inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
-                                       clean_depth, transparent_cams, cam_size],
-                               outputs=outmodel)
-            transparent_cams.change(model_from_scene_fun,
-                                    inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
-                                            clean_depth, transparent_cams, cam_size],
-                                    outputs=outmodel)
-    demo.launch(share=False, server_name=server_name, server_port=server_port)
+    # run_btn.click(fn=recon_fun,
+    #                 inputs=[inputfiles, schedule, niter, min_conf_thr, as_pointcloud,
+    #                         mask_sky, clean_depth, transparent_cams, cam_size,
+    #                         scenegraph_type, winsize, refid],
+    #                 outputs=[scene, outmodel, outgallery])
+    # inputfiles = glob.glob("/home/ron/Documents/ImageMatching/image-matching-challenge-2024/test/church/images/*.png")
+    inputfiles = glob.glob("/home/ron/Documents/ImageMatching/pragueparks/lizard/set_100/images/*.jpg")
+    recon_fun(
+        inputfiles, 
+        schedule="linear", 
+        niter=100, 
+        min_conf_thr=3.0,
+        as_pointcloud=True,
+        mask_sky=True,
+        clean_depth=True,
+        transparent_cams=False,
+        cam_size=0.05,
+        scenegraph_type="lightglue",
+        winsize=4,
+        refid=0,
+    )
 
 
 if __name__ == '__main__':

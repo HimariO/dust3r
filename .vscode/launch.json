@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "${command:pickArgs}"
+        },
+        {
+            "name": "demo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/demo_cli.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--model_name", "DUSt3R_ViTLarge_BaseDecoder_512_dpt"
+            ],
+            "env": {
+                "CUDA_LAUNCH_BLOCKING": "0"
+            }
+        }
+    ]
+}

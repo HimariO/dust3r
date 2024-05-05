@@ -19,14 +19,18 @@ class PointCloudOptimizer(BasePCOptimizer):
     Graph edges: observations = (pred1, pred2)
     """
 
-    def __init__(self, *args, optimize_pp=False, focal_break=20, **kwargs):
+    def __init__(self, *args, optimize_pp=False, focal_break=20, batch_size=16, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self.batch_size = batch_size
         self.has_im_poses = True  # by definition of this class
         self.focal_break = focal_break
 
         # adding thing to optimize
-        self.im_depthmaps = nn.ParameterList(torch.randn(H, W)/10-3 for H, W in self.imshapes)  # log(depth)
+        self.im_depthmaps = nn.ParameterList(
+            torch.randn(H, W) / 10 - 3
+            for H, W in self.imshapes
+        )  # log(depth)
         self.im_poses = nn.ParameterList(self.rand_pose(self.POSE_DIM) for _ in range(self.n_imgs))  # camera poses
         self.im_focals = nn.ParameterList(torch.FloatTensor(
             [self.focal_break*np.log(max(H, W))]) for H, W in self.imshapes)  # camera intrinsics
@@ -185,20 +189,75 @@ class PointCloudOptimizer(BasePCOptimizer):
             res = [dm[:h*w].view(h, w, 3) for dm, (h, w) in zip(res, self.imshapes)]
         return res
 
+    # def forward(self):
+    #     pw_poses = self.get_pw_poses()  # cam-to-world
+    #     pw_adapt = self.get_adaptors().unsqueeze(1)
+    #     proj_pts3d = self.get_pts3d(raw=True)
+
+    #     # rotate pairwise prediction according to pw_poses
+    #     aligned_pred_i = geotrf(pw_poses, pw_adapt * self._stacked_pred_i)
+    #     aligned_pred_j = geotrf(pw_poses, pw_adapt * self._stacked_pred_j)
+
+    #     # compute the less
+    #     li = self.dist(proj_pts3d[self._ei], aligned_pred_i, weight=self._weight_i).sum() / self.total_area_i
+    #     lj = self.dist(proj_pts3d[self._ej], aligned_pred_j, weight=self._weight_j).sum() / self.total_area_j
+
+    #     return li + lj
+    
+    # def forward(self):
+    #     """
+    #     164 pairs, 16 batch size, 2.29 it/s, 11.5GB VRAM  (swin, winsize=4)
+    #     """
+    #     pw_poses = self.get_pw_poses()  # cam-to-world, (num_pairs, 4, 4)
+    #     pw_adapt = self.get_adaptors().unsqueeze(1)  # (num_pairs, 1, 3)
+    #     proj_pts3d = self.get_pts3d(raw=True)  # (num_img, h * w, 3)
+    #     pairs = pw_poses.shape[0]
+        
+    #     loss = 0.0
+    #     for b in range(0, pairs, self.batch_size):
+    #         idx = slice(b, b + self.batch_size)
+    #         # rotate pairwise prediction according to pw_poses
+    #         aligned_pred_i = geotrf(pw_poses[idx], pw_adapt[idx] * self._stacked_pred_i[idx])
+    #         aligned_pred_j = geotrf(pw_poses[idx], pw_adapt[idx] * self._stacked_pred_j[idx])
+
+    #         # compute the less
+    #         norm_i = self.total_area_i // pairs * self.batch_size
+    #         norm_j = self.total_area_j // pairs * self.batch_size
+    #         li = self.dist(proj_pts3d[self._ei[idx]], aligned_pred_i, weight=self._weight_i[idx]).sum() / norm_i
+    #         lj = self.dist(proj_pts3d[self._ej[idx]], aligned_pred_j, weight=self._weight_j[idx]).sum() / norm_j
+    #         loss += li + lj
+
+    #     return loss
+    
     def forward(self):
-        pw_poses = self.get_pw_poses()  # cam-to-world
-        pw_adapt = self.get_adaptors().unsqueeze(1)
-        proj_pts3d = self.get_pts3d(raw=True)
+        """
+        400 pairs, 288x512, 16 batch size, 1.5 s/it, 10.4GB VRAM  (swin, winsize=4)
+        328 pairs, 16 batch size, 1.7 s/it, 10.9GB VRAM  (swin, winsize=8)
+        164 pairs, 16 batch size, 1.11 s/it, 6.9GB VRAM  (swin, winsize=4)
+        """
+        pw_poses = self.get_pw_poses()  # cam-to-world, (num_pairs, 4, 4)
+        pw_poses = pw_poses.cuda()
+        pw_adapt = self.get_adaptors().unsqueeze(1)  # (num_pairs, 1, 3)
+        pw_adapt = pw_adapt.cuda()
+        proj_pts3d = self.get_pts3d(raw=True)  # (num_img, h * w, 3)
+        proj_pts3d = proj_pts3d.cuda()
+        pairs = pw_poses.shape[0]
+        
+        loss = 0.0
+        for b in range(0, pairs, self.batch_size):
+            idx = slice(b, b + self.batch_size)
+            # rotate pairwise prediction according to pw_poses
+            aligned_pred_i = geotrf(pw_poses[idx].cuda(), pw_adapt[idx].cuda() * self._stacked_pred_i[idx].cuda())
+            aligned_pred_j = geotrf(pw_poses[idx].cuda(), pw_adapt[idx].cuda() * self._stacked_pred_j[idx].cuda())
 
-        # rotate pairwise prediction according to pw_poses
-        aligned_pred_i = geotrf(pw_poses, pw_adapt * self._stacked_pred_i)
-        aligned_pred_j = geotrf(pw_poses, pw_adapt * self._stacked_pred_j)
+            # compute the less
+            norm_i = self.total_area_i // pairs * self.batch_size
+            norm_j = self.total_area_j // pairs * self.batch_size
+            li = self.dist(proj_pts3d[self._ei[idx]].cuda(), aligned_pred_i, weight=self._weight_i[idx].cuda()).sum() / norm_i
+            lj = self.dist(proj_pts3d[self._ej[idx]].cuda(), aligned_pred_j, weight=self._weight_j[idx].cuda()).sum() / norm_j
+            loss += li + lj
 
-        # compute the less
-        li = self.dist(proj_pts3d[self._ei], aligned_pred_i, weight=self._weight_i).sum() / self.total_area_i
-        lj = self.dist(proj_pts3d[self._ej], aligned_pred_j, weight=self._weight_j).sum() / self.total_area_j
-
-        return li + lj
+        return loss
 
 
 def _fast_depthmap_to_pts3d(depth, pixel_grid, focal, pp):

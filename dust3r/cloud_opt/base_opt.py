@@ -4,6 +4,7 @@
 # --------------------------------------------------------
 # Base class for the global alignement procedure
 # --------------------------------------------------------
+import sys
 from copy import deepcopy
 
 import numpy as np
@@ -349,6 +350,11 @@ class BasePCOptimizer (nn.Module):
 
 def global_alignment_loop(net, lr=0.01, niter=300, schedule='cosine', lr_min=1e-6):
     params = [p for p in net.parameters() if p.requires_grad]
+    params_size = [p.shape for p in params]
+    pbytes = 0
+    for p in params:
+        pbytes += sys.getsizeof(p.storage())
+    
     if not params:
         return net
 

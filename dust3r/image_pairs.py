@@ -6,9 +6,12 @@
 # --------------------------------------------------------
 import numpy as np
 import torch
+from tqdm import tqdm
+from lightglue import LightGlue, SuperPoint, DISK, SIFT, ALIKED, DoGHardNet
+from lightglue.utils import load_image, rbd
 
 
-def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True):
+def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, filelist=None):
     pairs = []
     if scene_graph == 'complete':  # complete graph
         for i in range(len(imgs)):
@@ -28,6 +31,23 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True):
         for j in range(len(imgs)):
             if j != refid:
                 pairs.append((imgs[refid], imgs[j]))
+    elif scene_graph.startswith('lightglue'):
+        topk = int(scene_graph.split('-')[1]) if '-' in scene_graph else 0
+        extractor = SuperPoint(max_num_keypoints=2048).eval().cuda()  # load the extractor
+        matcher = LightGlue(features='superpoint').eval().cuda()  # load the matcher
+        trange = tqdm(range(len(imgs)), desc="make lightglue pairs")
+        for i in trange:
+            feats0 = extractor.extract(load_image(filelist[i]).cuda())
+            match_list = []
+            for j in range(i):
+                feats1 = extractor.extract(load_image(filelist[j]).cuda())
+                matches01 = matcher({'image0': feats0, 'image1': feats1})
+                matches01 = rbd(matches01)
+                match_list.append((j, matches01['matches'].shape[0]))
+            match_list = sorted(match_list, key=lambda x: -x[1])
+            for j, _ in match_list[:topk]:
+                pairs.append((imgs[i], imgs[j]))
+        
     if symmetrize:
         pairs += [(img2, img1) for img1, img2 in pairs]
 
