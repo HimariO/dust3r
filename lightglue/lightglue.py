@@ -406,16 +406,14 @@ class LightGlue(nn.Module):
         )
 
         state_dict = None
-        if features is not None:
+        if conf.checkpoint is not None:
+            state_dict = torch.load(conf.checkpoint, map_location="cpu")
+        elif features is not None:
             fname = f"{conf.weights}_{self.version.replace('.', '-')}.pth"
             state_dict = torch.hub.load_state_dict_from_url(
                 self.url.format(self.version, features), file_name=fname
             )
             self.load_state_dict(state_dict, strict=False)
-        elif conf.weights is not None:
-            path = Path(__file__).parent
-            path = path / "weights/{}.pth".format(self.conf.weights)
-            state_dict = torch.load(str(path), map_location="cpu")
 
         if state_dict:
             # rename old state dict entries

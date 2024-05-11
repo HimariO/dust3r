@@ -47,6 +47,7 @@ from kornia.color import rgb_to_grayscale
 from torch import nn
 
 from .utils import Extractor
+from types import SimpleNamespace
 
 
 def simple_nms(scores, nms_radius: int):
@@ -141,8 +142,12 @@ class SuperPoint(Extractor):
             c5, self.conf.descriptor_dim, kernel_size=1, stride=1, padding=0
         )
 
-        url = "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/superpoint_v1.pth"  # noqa
-        self.load_state_dict(torch.hub.load_state_dict_from_url(url))
+        conf = SimpleNamespace(**conf)
+        if hasattr(conf, "checkpoint") and conf.checkpoint:
+            self.load_state_dict(torch.load(conf.checkpoint, map_location="cpu"))
+        else:
+            url = "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/superpoint_v1.pth"  # noqa
+            self.load_state_dict(torch.hub.load_state_dict_from_url(url))
 
         if self.conf.max_num_keypoints is not None and self.conf.max_num_keypoints <= 0:
             raise ValueError("max_num_keypoints must be positive or None")
