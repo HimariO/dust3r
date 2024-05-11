@@ -6,11 +6,22 @@
 # --------------------------------------------------------
 import numpy as np
 import torch
+from PIL import Image
 from tqdm import tqdm
 from lightglue import LightGlue, SuperPoint, DISK, SIFT, ALIKED, DoGHardNet
 from lightglue.utils import load_image, rbd
 
 
+SUPERPOINT_CKPT = "/home/ron/Documents/ImageMatching/pretrain_models/superpoint_v1.pth"
+LIGTHGLUE_CKPT = "/home/ron/Documents/ImageMatching/pretrain_models/superpoint_lightglue.pth"
+DINO_CKPT = 'facebook/dinov2-base'
+
+# SUPERPOINT_CKPT = "//kaggle/input/imc-models/pretrain_models/superpoint_v1.pth"
+# LIGTHGLUE_CKPT = "/kaggle/input/imc-models/pretrain_models/superpoint_lightglue.pth"
+# DINO_CKPT = '/kaggle/input/dinov2/pytorch/base/1/'
+
+
+@torch.no_grad
 def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, filelist=None):
     pairs = []
     if scene_graph == 'complete':  # complete graph
@@ -33,8 +44,9 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, fi
                 pairs.append((imgs[refid], imgs[j]))
     elif scene_graph.startswith('lightglue'):
         topk = int(scene_graph.split('-')[1]) if '-' in scene_graph else 0
-        extractor = SuperPoint(max_num_keypoints=2048).eval().cuda()  # load the extractor
-        matcher = LightGlue(features='superpoint').eval().cuda()  # load the matcher
+        extractor = SuperPoint(max_num_keypoints=2048, checkpoint=SUPERPOINT_CKPT).eval().cuda()  # load the extractor
+        matcher = LightGlue(features='superpoint', checkpoint=SUPERPOINT_CKPT).eval().cuda()  # load the matcher
+        
         trange = tqdm(range(len(imgs)), desc="make lightglue pairs")
         for i in trange:
             feats0 = extractor.extract(load_image(filelist[i]).cuda())
@@ -43,10 +55,41 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, fi
                 feats1 = extractor.extract(load_image(filelist[j]).cuda())
                 matches01 = matcher({'image0': feats0, 'image1': feats1})
                 matches01 = rbd(matches01)
-                match_list.append((j, matches01['matches'].shape[0]))
+                match_pts = matches01['matches'].shape[0]
+                if match_pts > 0:
+                    match_list.append((j, match_pts))
+            
             match_list = sorted(match_list, key=lambda x: -x[1])
             for j, _ in match_list[:topk]:
                 pairs.append((imgs[i], imgs[j]))
+    elif scene_graph.startswith('dino'):
+        from transformers import AutoImageProcessor, AutoModel
+        processor = AutoImageProcessor.from_pretrained(DINO_CKPT)
+        model = AutoModel.from_pretrained(DINO_CKPT).eval().to('cuda')
+
+        topk = int(scene_graph.split('-')[1]) if '-' in scene_graph else 0
+        trange = tqdm(range(len(imgs)), desc="make dino pairs")
+        embeds = []
+        
+        for i in trange:
+            img_i = Image.open(filelist[i])
+            inputs = processor(images=img_i, return_tensors="pt").to('cuda')
+            outputs = model(**inputs)
+            embed = torch.nn.functional.normalize(outputs.last_hidden_state.mean(dim=1))
+            embeds.append(torch.squeeze(embed, dim=0))
+            
+            match_list = []
+            for j in range(i):
+                score = torch.dot(embeds[j], embeds[i]).cpu()
+                if score > .3:
+                    match_list.append((score, j))
+            
+            if match_list:
+                match_list = sorted(match_list)
+                step_size = max(1, len(match_list) // topk)
+                for sc, j in match_list[step_size - 1::step_size]:
+                    pairs.append((imgs[i], imgs[j]))
+                print(len(match_list[step_size - 1::step_size]), len(match_list))
         
     if symmetrize:
         pairs += [(img2, img1) for img1, img2 in pairs]

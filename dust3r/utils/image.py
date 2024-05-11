@@ -112,8 +112,15 @@ def load_images(folder_or_list, size, square_ok=False, verbose=True):
         W2, H2 = img.size
         if verbose:
             print(f' - adding {path} with resolution {W1}x{H1} --> {W2}x{H2}')
-        imgs.append(dict(img=ImgNorm(img)[None], true_shape=np.int32(
-            [img.size[::-1]]), idx=len(imgs), instance=str(len(imgs))))
+        imgs.append(
+            dict(
+                img=ImgNorm(img)[None], 
+                true_shape=np.int32([img.size[::-1]]), 
+                idx=len(imgs), 
+                instance=str(len(imgs)),
+                filepath=path,
+            )
+        )
 
     assert imgs, 'no images foud at '+root
     if verbose:

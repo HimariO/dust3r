@@ -68,7 +68,11 @@ class AsymmetricCroCo3DStereo (
 
         # dust3r specific initialization
         self.dec_blocks2 = deepcopy(self.dec_blocks)
-        self.set_downstream_head(output_mode, head_type, landscape_only, depth_mode, conf_mode, **croco_kwargs)
+        patch_size = croco_kwargs.pop("patch_size")
+        img_size = croco_kwargs.pop("img_size")
+
+        self.set_downstream_head(
+            output_mode, head_type, landscape_only, depth_mode, conf_mode, patch_size, img_size,**croco_kwargs)
         self.set_freeze(freeze)
 
     @classmethod

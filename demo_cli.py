@@ -33,29 +33,6 @@ torch.backends.cuda.matmul.allow_tf32 = True  # for gpu >= Ampere and pytorch >=
 batch_size = 1
 
 
-def get_args_parser():
-    parser = argparse.ArgumentParser()
-    parser_url = parser.add_mutually_exclusive_group()
-    parser_url.add_argument("--local_network", action='store_true', default=False,
-                            help="make app accessible on local network: address will be set to 0.0.0.0")
-    parser_url.add_argument("--server_name", type=str, default=None, help="server url, default is 127.0.0.1")
-    parser.add_argument("--image_size", type=int, default=512, choices=[512, 224], help="image size")
-    parser.add_argument("--server_port", type=int, help=("will start gradio app on this port (if available). "
-                                                         "If None, will search for an available port starting at 7860."),
-                        default=None)
-    parser_weights = parser.add_mutually_exclusive_group(required=True)
-    parser_weights.add_argument("--weights", type=str, help="path to the model weights", default=None)
-    parser_weights.add_argument("--model_name", type=str, help="name of the model weights",
-                                choices=["DUSt3R_ViTLarge_BaseDecoder_512_dpt",
-                                         "DUSt3R_ViTLarge_BaseDecoder_512_linear",
-                                         "DUSt3R_ViTLarge_BaseDecoder_224_linear"])
-    parser.add_argument("--device", type=str, default='cuda', help="pytorch device")
-    parser.add_argument("--tmp_dir", type=str, default=None, help="value for tempfile.tempdir")
-    parser.add_argument("--silent", action='store_true', default=False,
-                        help="silence logs")
-    return parser
-
-
 def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, cam_size=0.05,
                                  cam_color=None, as_pointcloud=False,
                                  transparent_cams=False, silent=False):
@@ -136,12 +113,10 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     if len(imgs) == 1:
         imgs = [imgs[0], copy.deepcopy(imgs[0])]
         imgs[1]['idx'] = 1
-    if scenegraph_type == "swin":
+    if scenegraph_type in ["swin", "lightglue", "dino"]:
         scenegraph_type = scenegraph_type + "-" + str(winsize)
     elif scenegraph_type == "oneref":
         scenegraph_type = scenegraph_type + "-" + str(refid)
-    elif scenegraph_type == "lightglue":
-        scenegraph_type = scenegraph_type + "-" + str(winsize)
 
     pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True, filelist=filelist)
     output = inference(pairs, model, device, batch_size=batch_size, verbose=not silent)
@@ -168,11 +143,11 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     confs_max = max([d.max() for d in confs])
     confs = [cmap(d/confs_max) for d in confs]
 
-    imgs = []
-    for i in range(len(rgbimg)):
-        imgs.append(rgbimg[i])
-        imgs.append(rgb(depths[i]))
-        imgs.append(rgb(confs[i]))
+    # imgs = []
+    # for i in range(len(rgbimg)):
+    #     imgs.append(rgbimg[i])
+    #     imgs.append(rgb(depths[i]))
+    #     imgs.append(rgb(confs[i]))
 
     return scene, outfile, imgs
 
@@ -188,7 +163,7 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
     #                 outputs=[scene, outmodel, outgallery])
     # inputfiles = glob.glob("/home/ron/Documents/ImageMatching/image-matching-challenge-2024/test/church/images/*.png")
     inputfiles = glob.glob("/home/ron/Documents/ImageMatching/pragueparks/lizard/set_100/images/*.jpg")
-    recon_fun(
+    scene, _, imgs = recon_fun(
         inputfiles, 
         schedule="linear", 
         niter=100, 
@@ -198,34 +173,25 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
         clean_depth=True,
         transparent_cams=False,
         cam_size=0.05,
-        scenegraph_type="lightglue",
+        scenegraph_type="dino",
+        # scenegraph_type="swin",
+        # scenegraph_type="lightglue",
         winsize=4,
         refid=0,
     )
+    # scene.get_pw_poses()  # (num_pairs, 4, 4)
+    im_poses = scene.get_im_poses()  # (num_imgs, 4, 4)
+    for img_dict, pose in zip(imgs, im_poses):
+        src_path = img_dict['filepath']
+        R = pose[:3, :3]
+        T = pose[:3, 3:]
+    return scene
 
 
 if __name__ == '__main__':
-    parser = get_args_parser()
-    args = parser.parse_args()
+    weights_path = "naver/" + "DUSt3R_ViTLarge_BaseDecoder_512_dpt"
 
-    if args.tmp_dir is not None:
-        tmp_path = args.tmp_dir
-        os.makedirs(tmp_path, exist_ok=True)
-        tempfile.tempdir = tmp_path
-
-    if args.server_name is not None:
-        server_name = args.server_name
-    else:
-        server_name = '0.0.0.0' if args.local_network else '127.0.0.1'
-
-    if args.weights is not None:
-        weights_path = args.weights
-    else:
-        weights_path = "naver/" + args.model_name
-    model = AsymmetricCroCo3DStereo.from_pretrained(weights_path).to(args.device)
-
+    model = AsymmetricCroCo3DStereo.from_pretrained(weights_path).to('cuda')
     # dust3r will write the 3D model inside tmpdirname
     with tempfile.TemporaryDirectory(suffix='dust3r_gradio_demo') as tmpdirname:
-        if not args.silent:
-            print('Outputing stuff in', tmpdirname)
-        main_demo(tmpdirname, model, args.device, args.image_size, server_name, args.server_port, silent=args.silent)
+        main_demo(tmpdirname, model, 'cuda', 512, '127.0.0.1', 7860, silent=False)
