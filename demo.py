@@ -135,9 +135,7 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     if len(imgs) == 1:
         imgs = [imgs[0], copy.deepcopy(imgs[0])]
         imgs[1]['idx'] = 1
-    if scenegraph_type == "swin":
-        scenegraph_type = scenegraph_type + "-" + str(winsize)
-    if scenegraph_type == "lightglue":
+    if scenegraph_type in ["swin", "lightglue", "dino"]:
         scenegraph_type = scenegraph_type + "-" + str(winsize)
     elif scenegraph_type == "oneref":
         scenegraph_type = scenegraph_type + "-" + str(refid)
@@ -179,7 +177,7 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
 def set_scenegraph_options(inputfiles, winsize, refid, scenegraph_type):
     num_files = len(inputfiles) if inputfiles is not None else 1
     max_winsize = max(1, math.ceil((num_files-1)/2))
-    if scenegraph_type in ["swin", "lightglue"]:
+    if scenegraph_type in ["swin", "lightglue", "dino"]:
         winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
                                 minimum=1, maximum=max_winsize, step=1, visible=True)
         refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
@@ -211,7 +209,7 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                                            value='linear', label="schedule", info="For global alignment!")
                 niter = gradio.Number(value=300, precision=0, minimum=0, maximum=5000,
                                       label="num_iterations", info="For global alignment!")
-                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref", "lightglue"],
+                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref", "lightglue", "dino"],
                                                   value='complete', label="Scenegraph",
                                                   info="Define how to make pairs",
                                                   interactive=True)

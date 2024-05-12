@@ -80,16 +80,23 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, fi
             
             match_list = []
             for j in range(i):
-                score = torch.dot(embeds[j], embeds[i]).cpu()
+                score = float(torch.dot(embeds[j], embeds[i]).cpu())
                 if score > .3:
                     match_list.append((score, j))
             
             if match_list:
-                match_list = sorted(match_list)
+                match_list = sorted(match_list, reverse=True)
+                # NOTE: skip high simliarity images when we have more images than we need.
+                num_distinct = sum([sc < 0.95 for sc, j in match_list])
+                dups = len(match_list) - num_distinct
+                skips = max(0, dups + min(0, num_distinct - topk))
+                match_list = match_list[skips:]
+                
                 step_size = max(1, len(match_list) // topk)
-                for sc, j in match_list[step_size - 1::step_size]:
+                # for sc, j in match_list[step_size - 1::step_size]:
+                for sc, j in match_list[::step_size]:
                     pairs.append((imgs[i], imgs[j]))
-                print(len(match_list[step_size - 1::step_size]), len(match_list))
+                print(len(match_list[::step_size]), len(match_list), skips)
         
     if symmetrize:
         pairs += [(img2, img1) for img1, img2 in pairs]

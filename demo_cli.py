@@ -128,8 +128,8 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     if mode == GlobalAlignerMode.PointCloudOptimizer:
         loss = scene.compute_global_alignment(init='mst', niter=niter, schedule=schedule, lr=lr)
 
-    outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
-                                      clean_depth, transparent_cams, cam_size)
+    # outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
+    #                                   clean_depth, transparent_cams, cam_size)
 
     # also return rgb, depth and confidence imgs
     # depth is normalized with the max value for all images
@@ -149,7 +149,7 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     #     imgs.append(rgb(depths[i]))
     #     imgs.append(rgb(confs[i]))
 
-    return scene, outfile, imgs
+    return scene, imgs
 
 
 def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False):
@@ -163,7 +163,7 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
     #                 outputs=[scene, outmodel, outgallery])
     # inputfiles = glob.glob("/home/ron/Documents/ImageMatching/image-matching-challenge-2024/test/church/images/*.png")
     inputfiles = glob.glob("/home/ron/Documents/ImageMatching/pragueparks/lizard/set_100/images/*.jpg")
-    scene, _, imgs = recon_fun(
+    scene, imgs = recon_fun(
         inputfiles, 
         schedule="linear", 
         niter=100, 
