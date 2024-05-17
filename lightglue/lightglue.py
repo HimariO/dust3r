@@ -406,7 +406,7 @@ class LightGlue(nn.Module):
         )
 
         state_dict = None
-        if conf.checkpoint is not None:
+        if hasattr(conf, "checkpoint") and conf.checkpoint is not None:
             state_dict = torch.load(conf.checkpoint, map_location="cpu")
         elif features is not None:
             fname = f"{conf.weights}_{self.version.replace('.', '-')}.pth"

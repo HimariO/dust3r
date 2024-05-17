@@ -7,6 +7,7 @@
 
 import math
 from collections import defaultdict, deque
+from itertools import product
 from heapq import heapify, heappop, heappush
 from typing import *
 
@@ -25,6 +26,70 @@ DINO_CKPT = 'facebook/dinov2-base'
 # SUPERPOINT_CKPT = "//kaggle/input/imc-models/pretrain_models/superpoint_v1.pth"
 # LIGTHGLUE_CKPT = "/kaggle/input/imc-models/pretrain_models/superpoint_lightglue.pth"
 # DINO_CKPT = '/kaggle/input/dinov2/pytorch/base/1/'
+
+
+class LightglueMatcher:
+
+    def __init__(self) -> None:
+        self.extractor = SuperPoint(max_num_keypoints=2048, checkpoint=SUPERPOINT_CKPT).eval().cuda()  # load the extractor
+        self.matcher = LightGlue(features='superpoint', checkpoint=LIGTHGLUE_CKPT).eval().cuda()  # load the matcher
+    
+    def load_img(self, img_dict) -> torch.Tensor:
+        img_path = img_dict['filepath']
+        return load_image(img_path).cuda()
+
+    def rotate_img_90(self, img: Union[Image.Image, torch.Tensor], k=1):
+        if k < 1:
+            return img
+        return torch.rot90(img, k=k, dims=(1, 2))
+
+    def extract_feat(self, img: torch.Tensor) -> Any:
+        return self.extractor.extract(img)
+    
+    def num_match_points(self, feats0, feats1) -> int:
+        matches01 = self.matcher({'image0': feats0, 'image1': feats1})
+        matches01 = rbd(matches01)
+        match_pts = matches01['matches'].shape[0]
+        return match_pts
+    
+    def get_pair_matches(self, imgs: List[Any], pairs_idx: List[Tuple[int]]=None):
+        n = len(imgs)
+        if pairs_idx is None:
+            pairs_idx = [
+                (i, j) 
+                for i in range(n) 
+                for j in range(i)
+            ]
+        
+        pair_matches = defaultdict(lambda: 0)
+        feats = defaultdict(list)
+        for i in range(n):
+            for r in range(4):
+                feat = self.extract_feat(
+                    self.rotate_img_90(self.load_img(imgs[i]), k=r)
+                )
+                feats[r].append(feat)
+        
+        rotate_states = [0] * n
+        for pair in tqdm(pairs_idx, desc=f"{self.__class__.__name__} pairing"):
+            i, j = pair[:2]
+            # for r1, r2 in product(range(4), range(4)):
+            for r2 in range(4):
+                feats0, feats1 = feats[0][i], feats[r2][j]
+                match_pts = self.num_match_points(feats0, feats1)
+                if match_pts > pair_matches[i, j]:
+                    rotate_states[j] = (rotate_states[i] + r2) % 4
+                pair_matches[i, j] = max(pair_matches[i, j], match_pts)
+        for i in range(n):
+            imgs[i]['img'] = torch.rot90(
+                imgs[i]['img'], 
+                k=rotate_states[i], 
+                dims=(2, 3)
+            )
+            if rotate_states[i] % 2:
+                imgs[i]['true_shape'] = imgs[i]['true_shape'][..., ::-1].copy()
+        return pair_matches
+
 
 
 def MST_pairing(edges: DefaultDict[Tuple[int], float], n: int, k: int):
@@ -129,18 +194,14 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, fi
     elif scene_graph.startswith('lightglue'):
         topk = int(scene_graph.split('-')[1]) if '-' in scene_graph else 0
         assert topk > 0
-        extractor = SuperPoint(max_num_keypoints=2048, checkpoint=SUPERPOINT_CKPT).eval().cuda()  # load the extractor
-        matcher = LightGlue(features='superpoint', checkpoint=SUPERPOINT_CKPT).eval().cuda()  # load the matcher
+        matcher = LightglueMatcher()
+        match_points_dict = matcher.get_pair_matches(imgs)
         
         trange = tqdm(range(len(imgs)), desc="make lightglue pairs")
         for i in trange:
-            feats0 = extractor.extract(load_image(filelist[i]).cuda())
             match_list = []
             for j in range(i):
-                feats1 = extractor.extract(load_image(filelist[j]).cuda())
-                matches01 = matcher({'image0': feats0, 'image1': feats1})
-                matches01 = rbd(matches01)
-                match_pts = matches01['matches'].shape[0]
+                match_pts = match_points_dict[i, j]
                 if match_pts > 0:
                     match_list.append((j, match_pts))
             
