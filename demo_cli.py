@@ -17,6 +17,8 @@ import functools
 import trimesh
 import copy
 from scipy.spatial.transform import Rotation
+import matplotlib.pyplot as pl
+pl.ion()
 
 from dust3r.inference import inference
 from dust3r.model import AsymmetricCroCo3DStereo
@@ -25,9 +27,8 @@ from dust3r.utils.image import load_images, rgb
 from dust3r.utils.device import to_numpy
 from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_meshes
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
+from imc_util import arr_to_str
 
-import matplotlib.pyplot as pl
-pl.ion()
 
 torch.backends.cuda.matmul.allow_tf32 = True  # for gpu >= Ampere and pytorch >= 1.12
 batch_size = 1
@@ -121,9 +122,10 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True, filelist=filelist)
     output = inference(pairs, model, device, batch_size=batch_size, verbose=not silent)
 
+    torch.cuda.empty_cache()
     mode = GlobalAlignerMode.PointCloudOptimizer if len(imgs) > 2 else GlobalAlignerMode.PairViewer
-    scene = global_aligner(output, device="cpu", mode=mode, verbose=not silent)
-    lr = 0.01
+    scene = global_aligner(output, device="cuda", mode=mode, verbose=not silent)
+    lr = 0.02
 
     if mode == GlobalAlignerMode.PointCloudOptimizer:
         loss = scene.compute_global_alignment(init='mst', niter=niter, schedule=schedule, lr=lr)
@@ -161,8 +163,9 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
     #                         mask_sky, clean_depth, transparent_cams, cam_size,
     #                         scenegraph_type, winsize, refid],
     #                 outputs=[scene, outmodel, outgallery])
-    # inputfiles = glob.glob("/home/ron/Documents/ImageMatching/image-matching-challenge-2024/test/church/images/*.png")
-    inputfiles = glob.glob("/home/ron/Documents/ImageMatching/pragueparks/lizard/set_100/images/*.jpg")
+    inputfiles = glob.glob("/home/ron/Documents/ImageMatching/image-matching-challenge-2024/train/church/images/*.png")[:100]
+    # inputfiles = glob.glob("/home/ron/Documents/ImageMatching/image-matching-challenge-2024/train/dioscuri/images/*.png")
+    # inputfiles = glob.glob("/home/ron/Documents/ImageMatching/pragueparks/lizard/set_100/images/*.jpg")
     scene, imgs = recon_fun(
         inputfiles, 
         schedule="linear", 
@@ -173,19 +176,21 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
         clean_depth=True,
         transparent_cams=False,
         cam_size=0.05,
-        scenegraph_type="dino",
+        # scenegraph_type="dino",
         # scenegraph_type="swin",
-        # scenegraph_type="lightglue",
+        scenegraph_type="lightglue",
         winsize=4,
         refid=0,
     )
     # scene.get_pw_poses()  # (num_pairs, 4, 4)
     im_poses = scene.get_im_poses()  # (num_imgs, 4, 4)
+    img2rt = {}
     for img_dict, pose in zip(imgs, im_poses):
         src_path = img_dict['filepath']
         R = pose[:3, :3]
         T = pose[:3, 3:]
-    return scene
+        img2rt[src_path] = {'R': R, 't': T}
+    return img2rt
 
 
 if __name__ == '__main__':

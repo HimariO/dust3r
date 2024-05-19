@@ -126,6 +126,7 @@ def MST_pairing(edges: DefaultDict[Tuple[int], float], n: int, k: int):
         ]
         heapify(que)
         
+        print(f" [prim]")
         while que:
             deg, d, a, b = heappop(que)
             if deg != max(degrees[a], degrees[b]):
@@ -134,7 +135,7 @@ def MST_pairing(edges: DefaultDict[Tuple[int], float], n: int, k: int):
             
             if visit[b] or (not d < math.inf):
                 continue
-            print(f"{deg}/{degrees[b]}", f"{d:.2f}", a, b)
+            print(f"{deg}/{degrees[b]}", f"{d:.2f}", f"{a} <--> {b}")
             visit[a] = True
             visit[b] = True
             pairs_idx.append((a, b, 1 - d))
@@ -172,23 +173,25 @@ def MST_pairing(edges: DefaultDict[Tuple[int], float], n: int, k: int):
 
 @torch.no_grad
 def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, filelist=None):
+    n = len(imgs)
     pairs = []
+    
     if scene_graph == 'complete':  # complete graph
-        for i in range(len(imgs)):
+        for i in range(n):
             for j in range(i):
                 pairs.append((imgs[i], imgs[j]))
     elif scene_graph.startswith('swin'):
         winsize = int(scene_graph.split('-')[1]) if '-' in scene_graph else 3
         pairsid = set()
-        for i in range(len(imgs)):
+        for i in range(n):
             for j in range(1, winsize+1):
-                idx = (i + j) % len(imgs)  # explicit loop closure
+                idx = (i + j) % n  # explicit loop closure
                 pairsid.add((i, idx) if i < idx else (idx, i))
         for i, j in pairsid:
             pairs.append((imgs[i], imgs[j]))
     elif scene_graph.startswith('oneref'):
         refid = int(scene_graph.split('-')[1]) if '-' in scene_graph else 0
-        for j in range(len(imgs)):
+        for j in range(n):
             if j != refid:
                 pairs.append((imgs[refid], imgs[j]))
     elif scene_graph.startswith('lightglue'):
@@ -197,24 +200,36 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, fi
         matcher = LightglueMatcher()
         match_points_dict = matcher.get_pair_matches(imgs)
         
-        trange = tqdm(range(len(imgs)), desc="make lightglue pairs")
-        for i in trange:
-            match_list = []
-            for j in range(i):
-                match_pts = match_points_dict[i, j]
-                if match_pts > 0:
-                    match_list.append((j, match_pts))
-            
-            match_list = sorted(match_list, key=lambda x: -x[1])
-            for j, _ in match_list[:topk]:
+        mst = True
+        trange = tqdm(range(n), desc="make lightglue pairs")
+        if mst:
+            norm_matches = defaultdict(lambda: math.inf)
+            max_pts = max(match_points_dict.values())
+            for i in trange:
+                match_list = []
+                for j in range(i):
+                    norm_matches[i, j] = 1 - match_points_dict[i, j] / max_pts
+            pairs_idx = MST_pairing(norm_matches, n, topk)
+            for i, j, _ in pairs_idx:
                 pairs.append((imgs[i], imgs[j]))
+        else:
+            for i in trange:
+                match_list = []
+                for j in range(i):
+                    match_pts = match_points_dict[i, j]
+                    if match_pts > 0:
+                        match_list.append((j, match_pts))
+                
+                match_list = sorted(match_list, key=lambda x: -x[1])
+                for j, _ in match_list[:topk]:
+                    pairs.append((imgs[i], imgs[j]))
     elif scene_graph.startswith('dino'):
         from transformers import AutoImageProcessor, AutoModel
         processor = AutoImageProcessor.from_pretrained(DINO_CKPT)
         model = AutoModel.from_pretrained(DINO_CKPT).eval().to('cuda')
 
         topk = int(scene_graph.split('-')[1]) if '-' in scene_graph else 0
-        trange = tqdm(range(len(imgs)), desc="make dino pairs")
+        trange = tqdm(range(n), desc="make dino pairs")
         mst = True
         
         if mst:
@@ -233,7 +248,7 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, fi
                     if score > .3:
                         inv_cos_sim[j, i] = score
             
-            pairs_idx = MST_pairing(inv_cos_sim, len(imgs), topk)
+            pairs_idx = MST_pairing(inv_cos_sim, n, topk)
             for i, j, _ in pairs_idx:
                 pairs.append((imgs[i], imgs[j]))
         else:
